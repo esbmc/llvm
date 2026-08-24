@@ -1,0 +1,48 @@
+name: Build trimmed LLVM archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_version:
+        description: "Upstream LLVM version to trim (e.g. 22.1.6)"
+        required: true
+        default: "22.1.6"
+
+permissions:
+  contents: write
+
+jobs:
+  trim-armv8:
+    name: Trim LLVM ${{ inputs.llvm_version }} (Linux ARM64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fetch upstream LLVM
+        run: |
+          mkdir -p dist
+          curl -fL --retry 3 -o dist/upstream.tar.xz \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ inputs.llvm_version }}/LLVM-${{ inputs.llvm_version }}-Linux-ARM64.tar.xz"
+
+      - name: Trim
+        run: ./tools/trim.sh dist/upstream.tar.xz "dist/LLVM-${{ inputs.llvm_version }}-Linux-ARM64-esbmc.tar.xz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: llvm-armv8-trimmed
+          path: dist/LLVM-*-Linux-ARM64-esbmc.tar.xz
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="llvm-${{ inputs.llvm_version }}-armv8"
+          asset="dist/LLVM-${{ inputs.llvm_version }}-Linux-ARM64-esbmc.tar.xz"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$asset" --clobber
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" \
+              --title "LLVM ${{ inputs.llvm_version }} (armv8, trimmed)" \
+              --notes "Trimmed LLVM ${{ inputs.llvm_version }} Linux ARM64 archive for ESBMC's static link. Produced by tools/trim.sh." \
+              "$asset"
+          fi
