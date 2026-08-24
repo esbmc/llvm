@@ -43,10 +43,15 @@ echo "[trim] $IN  (top: $TOP)"
 # alongside the ESBMC build (the full tree is ~11 GB extracted). --no-wildcards
 # -match-slash restricts '*' to a single path segment so lib/*.a stays flat and
 # lib/clang/*/include picks only the resource-header subtree.
+#
+# lib/*.so* stays because LLVMExports/ClangTargets import libLTO, libRemarks,
+# libclang and libclang-cpp by path, and find_package() aborts when an imported
+# target's file is missing -- even though the static link never loads them.
 tar -xJf "$IN" -C "$WORK" \
   --anchored --wildcards --no-wildcards-match-slash \
   "$TOP/include" \
   "$TOP/lib/*.a" \
+  "$TOP/lib/*.so*" \
   "$TOP/lib/cmake" \
   "$TOP/lib/clang/*/include" \
   "$TOP/bin/llvm-tblgen" \
@@ -57,6 +62,13 @@ verify "$TOP/lib/cmake/llvm/LLVMConfig.cmake"
 verify "$TOP/lib/cmake/clang/ClangConfig.cmake"
 verify "$TOP/bin/llvm-tblgen"
 verify "$TOP/bin/clang-tblgen"
+
+# Every file an exported target points at must survive the trim, or the first
+# find_package() in a consumer fails instead of this script.
+while read -r ref; do
+  verify "$TOP/$ref"
+done < <(grep -rhoE 'IMPORTED_LOCATION[^ ]* "\$\{_IMPORT_PREFIX\}/[^"]*"' \
+           "$WORK/$TOP/lib/cmake" | sed -E 's|.*_IMPORT_PREFIX\}/||; s|"$||' | sort -u)
 
 shopt -s nullglob
 archives=( "$WORK/$TOP/lib/"*.a )
