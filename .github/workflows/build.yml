@@ -14,7 +14,9 @@ permissions:
 jobs:
   trim-armv8:
     name: Trim LLVM ${{ inputs.llvm_version }} (Linux ARM64)
-    runs-on: ubuntu-24.04-arm
+    # trim.sh only repacks a tarball, so the host arch need not match the
+    # target's; x86 runners are far less contended than the ARM pool.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
 
