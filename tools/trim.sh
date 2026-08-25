@@ -63,12 +63,42 @@ verify "$TOP/lib/cmake/clang/ClangConfig.cmake"
 verify "$TOP/bin/llvm-tblgen"
 verify "$TOP/bin/clang-tblgen"
 
-# Every file an exported target points at must survive the trim, or the first
-# find_package() in a consumer fails instead of this script.
-while read -r ref; do
-  verify "$TOP/$ref"
-done < <(grep -rhoE 'IMPORTED_LOCATION[^ ]* "\$\{_IMPORT_PREFIX\}/[^"]*"' \
-           "$WORK/$TOP/lib/cmake" | sed -E 's|.*_IMPORT_PREFIX\}/||; s|"$||' | sort -u)
+# The Linux-ARM64 package is a whole-monorepo install, so LLVMExports and
+# ClangTargets import ~100 tool binaries (llc, opt, clang-tidy, ...) that a
+# consumer of the libraries never touches and that would put the archive into
+# the gigabytes. find_package() aborts on the first one missing, so drop the
+# existence check for every file the trim did not keep. The imported target
+# stays, with a location nothing here resolves.
+python3 - "$WORK/$TOP" <<'PY'
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+check = re.compile(r'^list\(APPEND _cmake_import_check_files_for_')
+ref = re.compile(r'\$\{_IMPORT_PREFIX\}/([^"]*)')
+pruned = 0
+
+for f in root.joinpath("lib/cmake").rglob("*.cmake"):
+    lines = f.read_text().splitlines(keepends=True)
+    kept = [
+        l for l in lines
+        if not (check.match(l)
+                and any(not root.joinpath(m).exists() for m in ref.findall(l)))
+    ]
+    if len(kept) != len(lines):
+        pruned += len(lines) - len(kept)
+        f.write_text("".join(kept))
+
+print(f"[trim] pruned {pruned} import checks for files not kept")
+PY
+
+# Whatever find_package() still checks has to be there, or the first consumer
+# to configure fails instead of this script.
+missing=0
+while read -r path; do
+  [[ -e "$WORK/$TOP/$path" ]] || { echo "checked but absent: $path" >&2; missing=1; }
+done < <(grep -rh '^list(APPEND _cmake_import_check_files_for_' "$WORK/$TOP/lib/cmake" \
+           | grep -oE '\$\{_IMPORT_PREFIX\}/[^"]*' | sed -E 's|.*_IMPORT_PREFIX\}/||' | sort -u)
+(( missing == 0 )) || exit 1
 
 shopt -s nullglob
 archives=( "$WORK/$TOP/lib/"*.a )
